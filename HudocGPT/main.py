@@ -1,7 +1,7 @@
+from fastapi import FastAPI, Query
 import csv
 import io
 import requests
-from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
 
 app = FastAPI()
@@ -12,11 +12,9 @@ def search_hudoc(
     language: str = Query(None, description="Language filter e.g. ENG"),
     year: int = Query(None, description="Year filter e.g. 2022"),
 ):
-    # Build a more complete HUDOC CSV query URL
     csv_url = (
         "https://hudoc.echr.coe.int/app/conversion/csv?"
-        "library=ECHR&searchMode=quick&query="
-        + query.replace(" ", "%20")
+        "library=ECHR&searchMode=quick&query=" + query.replace(" ", "%20")
     )
 
     headers = {
@@ -31,7 +29,7 @@ def search_hudoc(
             content={
                 "error": "HUDOC CSV request failed",
                 "status_code": r.status_code,
-                "response_excerpt": r.text[:300]  # just a preview
+                "response_excerpt": r.text[:300]
             }
         )
 
