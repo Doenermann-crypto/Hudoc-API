@@ -1,68 +1,56 @@
 import csv
-import os
-import tempfile
+import io
+import requests
 from fastapi import FastAPI, Query
-from playwright.sync_api import sync_playwright
 
 app = FastAPI()
 
 @app.get("/search")
 def search_hudoc(
-    query: str = Query(..., description="Search terms like 'Article 10' or 'freedom of expression'"),
-    language: str = Query(None, description="Language of the document, e.g., 'ENG'"),
-    year: int = Query(None, description="Year of the judgment, e.g., 2022")
+    query: str = Query(..., description="Search terms like 'Article 10'"),
+    language: str = Query(None, description="Language filter e.g. ENG"),
+    year: int = Query(None, description="Year filter e.g. 2022"),
 ):
-    results = []
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(accept_downloads=True)
-        page = context.new_page()
+    # BUILD HUDOC CSV EXPORT URL
+    csv_url = (
+        "https://hudoc.echr.coe.int/app/conversion/csv?"
+        "library=ECHR&query="
+        f"{query.replace(' ', '%20')}"
+    )
 
-        # Go to HUDOC and input search query
-        page.goto("https://hudoc.echr.coe.int/eng")
-        page.fill('input[placeholder="Search..."]', query)
-        page.keyboard.press("Enter")
-        page.wait_for_timeout(5000)  # Wait for results to load
+    # DOWNLOAD CSV FILE
+    r = requests.get(csv_url)
+    if r.status_code != 200:
+        return {"error": "HUDOC CSV request failed"}
 
-        # Click Export > Export as CSV
-        page.click("text=Export")
-        with page.expect_download() as download_info:
-            page.click("text=Export as CSV")
-        download = download_info.value
+    # PARSE CSV
+    data = []
+    csv_text = r.text
+    reader = csv.DictReader(io.StringIO(csv_text))
 
-        # Save and parse the downloaded CSV
-        temp_dir = tempfile.gettempdir()
-        csv_path = os.path.join(temp_dir, download.suggested_filename)
-        download.save_as(csv_path)
+    for row in reader:
+        # Filters
+        if language and row.get("DocLanguage") and row["DocLanguage"].upper() != language.upper():
+            continue
 
-        with open(csv_path, encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                # Optional filters
-                if language and row.get("DocLanguage") and row["DocLanguage"].upper() != language.upper():
-                    continue
-                if year and row.get("Date") and not str(year) in row["Date"]:
-                    continue
+        if year and row.get("DecisionDate") and not str(year) in row["DecisionDate"]:
+            continue
 
-                results.append({
-                    "title": row.get("DocName") or row.get("ItemID") or "Untitled",
-                    "url": row.get("Url") or "https://hudoc.echr.coe.int/",
-                    "date": row.get("Date"),
-                    "applicationNumber": row.get("ApplicationNumber"),
-                    "importance": row.get("Importance")
-                })
+        data.append({
+            "title": row.get("ItemID") or "Untitled",
+            "url": row.get("Url"),
+            "date": row.get("DecisionDate"),
+            "applicationNumber": row.get("AppNo"),
+            "importance": row.get("ImportanceLevel")
+        })
 
-                if len(results) >= 5:
-                    break
-
-        browser.close()
+        # Limit results
+        if len(data) >= 5:
+            break
 
     return {
         "query": query,
-        "filters": {
-            "language": language,
-            "year": year
-        },
-        "results": results
+        "filters": {"language": language, "year": year},
+        "results": data
     }
